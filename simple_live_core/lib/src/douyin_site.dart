@@ -54,24 +54,19 @@ static const String kDefaultReferer = "https://live.douyin.com";
     "Pragma": "no-cache",
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-site",
-  };
   if (cookie.isNotEmpty) {
     headers["Cookie"] = cookie;
+  } else {
+    headers["Cookie"] = kDefaultCookie;
   }
   return headers;
 }
-
 
   @override
 Future<List<LiveCategory>> getCategores() async {
   try {
     var result = await HttpClient.instance.getJson(
       "https://www.douyin.com/live/home/",
-      queryParameters: {"aid": "6383", "app_name": "douyin_web"},
-      header: await getRequestHeaders(),
-    );
-
     List<LiveCategory> categories = [];
     var tabGroups = result["data"]?["tab_groups"];
     if (tabGroups is List) {
