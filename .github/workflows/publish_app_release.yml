@@ -36,30 +36,21 @@ jobs:
           cd simple_live_app
           flutter pub get
 
-      - name: 打包 APK（arm64-v8a）
+      - name: 打包 APK（全架构）
         run: |
           cd simple_live_app
-          flutter build apk --debug --target-platform android-arm64
+          flutter build apk --debug --split-per-abi
 
-      - name: 重命名 arm64-v8a APK
+      - name: 重命名并收集 APK
         run: |
-          cp simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk \
-             simple_live_app/build/app/outputs/flutter-apk/simple_live_arm64-v8a.apk
-
-      - name: 打包 APK（armeabi-v7a）
-        run: |
-          cd simple_live_app
-          flutter build apk --debug --target-platform android-arm
-
-      - name: 重命名 armeabi-v7a APK
-        run: |
-          cp simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk \
-             simple_live_app/build/app/outputs/flutter-apk/simple_live_armeabi-v7a.apk
+          mkdir -p apk_output
+          cp simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk apk_output/simple_live_arm64-v8a.apk || true
+          cp simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk apk_output/simple_live_armeabi-v7a.apk || true
+          ls -lh apk_output/
 
       - name: 上传 APK
         uses: actions/upload-artifact@v4
         with:
           name: simple_live_apks
-          path: |
-            simple_live_app/build/app/outputs/flutter-apk/simple_live_*.apk
+          path: apk_output/*.apk
           retention-days: 3
