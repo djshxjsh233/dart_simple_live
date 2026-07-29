@@ -16,10 +16,11 @@ class DouyinSite implements LiveSite {
   @override
   LiveDanmaku getDanmaku() => DouyinDanmaku();
 
-  /// 使用 QQBrowser User-Agent，降低被风控概率
-static const String kDefaultUserAgent =
-    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400";
-static const String kDefaultReferer = "https://live.douyin.com";
+  /// 使用 QQBrowser User-Agent（参考 DouyinLiveRecorder）
+  static const String kDefaultUserAgent =
+      "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400";
+
+  static const String kDefaultReferer = "https://live.douyin.com";
 
   static const String kDefaultAuthority = "live.douyin.com";
 
@@ -43,63 +44,79 @@ static const String kDefaultReferer = "https://live.douyin.com";
     "User-Agent": kDefaultUserAgent,
   };
 
-  Future<Map<String, String>> getRequestHeaders() async {
-  var headers = {
-    "User-Agent": kDefaultUserAgent,
-    "Referer": kDefaultReferer,
-    "Origin": "https://live.douyin.com",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-  if (cookie.isNotEmpty) {
-    headers["Cookie"] = cookie;
-  } else {
-    headers["Cookie"] = kDefaultCookie;
+  Future<Map<String, dynamic>> getRequestHeaders() async {
+    try {
+      // 如果用户已设置 cookie，直接使用用户的 cookie
+      if (cookie.isNotEmpty) {
+        headers["cookie"] = cookie;
+        return headers;
+      }
+
+      // 使用默认的 ttwid cookie（只需要 ttwid 即可获取所有画质）
+      headers["cookie"] = kDefaultCookie;
+      return headers;
+    } catch (e) {
+      CoreLog.error(e);
+      if (!(headers["cookie"]?.toString().isNotEmpty ?? false)) {
+        headers["cookie"] = kDefaultCookie;
+      }
+      return headers;
+    }
   }
-  return headers;
-}
 
   @override
-Future<List<LiveCategory>> getCategores() async {
-  try {
-    var result = await HttpClient.instance.getJson(
-      "https://www.douyin.com/live/home/",
+  Future<List<LiveCategory>> getCategores() async {
     List<LiveCategory> categories = [];
-    var tabGroups = result["data"]?["tab_groups"];
-    if (tabGroups is List) {
-      for (var group in tabGroups) {
-        List<LiveSubCategory> subList = [];
-        var tabs = group["tabs"];
-        if (tabs is List) {
-          for (var tab in tabs) {
-            // 过滤掉"关注"、"推荐"等非分类tab
-            var type = tab["type"]?.toString() ?? "";
-            if (type != "category") continue;
-            subList.add(LiveSubCategory(
-              id: tab["id"]?.toString() ?? "",
-              name: tab["name"]?.toString() ?? tab["title"]?.toString() ?? "",
-              parentId: "",
-            ));
-          }
-        }
-        if (subList.isNotEmpty) {
-          categories.add(LiveCategory(
-            id: group["name"]?.toString() ?? "",
-            name: group["name"]?.toString() ?? "",
-            children: subList,
-          ));
-        }
+    var result = await HttpClient.instance.getText(
+      "https://live.douyin.com/",
+      queryParameters: {},
+      header: await getRequestHeaders(),
+    );
+
+    var renderData =
+        RegExp(
+          r'\{\\"pathname\\":\\"\/\\",\\"categoryData.*?\]\\n',
+        ).firstMatch(result)?.group(0) ??
+        "";
+    var renderDataJson = json.decode(
+      renderData
+          .trim()
+          .replaceAll('\\"', '"')
+          .replaceAll(r"\\", r"\")
+          .replaceAll(']\\n', ""),
+    );
+
+    for (var item in renderDataJson["categoryData"]) {
+      List<LiveSubCategory> subs = [];
+      var id = '${item["partition"]["id_str"]},${item["partition"]["type"]}';
+      for (var subItem in item["sub_partition"]) {
+        var subCategory = LiveSubCategory(
+          id: '${subItem["partition"]["id_str"]},${subItem["partition"]["type"]}',
+          name: asT<String?>(subItem["partition"]["title"]) ?? "",
+          parentId: id,
+          pic: "",
+        );
+        subs.add(subCategory);
       }
+
+      var category = LiveCategory(
+        children: subs,
+        id: id,
+        name: asT<String?>(item["partition"]["title"]) ?? "",
+      );
+      subs.insert(
+        0,
+        LiveSubCategory(
+          id: category.id,
+          name: category.name,
+          parentId: category.id,
+          pic: "",
+        ),
+      );
+      categories.add(category);
     }
     return categories;
-  } catch (e) {
-    CoreLog.error("抖音获取分类失败: $e");
-    return [];
   }
-}
 
   @override
   Future<LiveCategoryResult> getCategoryRooms(
@@ -282,7 +299,7 @@ Future<List<LiveCategory>> getCategores() async {
         webRid: webRid,
         roomId: roomId,
         userId: userUniqueId,
-        cookie: headers["cookie"] ?? "",
+        cookie: headers["cookie"],
       ),
       data: room["stream_url"],
     );
@@ -344,7 +361,7 @@ Future<List<LiveCategory>> getCategores() async {
         webRid: webRid,
         roomId: roomId,
         userId: userUniqueId,
-        cookie: headers["cookie"] ?? "",
+        cookie: headers["cookie"],
       ),
       data: roomStatus ? roomData["stream_url"] : {},
     );
@@ -388,7 +405,7 @@ Future<List<LiveCategory>> getCategores() async {
         webRid: webRid,
         roomId: roomId,
         userId: userUniqueId,
-        cookie: headers["cookie"] ?? "",
+        cookie: headers["cookie"],
       ),
       data: roomStatus ? room["stream_url"] : {},
     );
@@ -519,190 +536,106 @@ Future<List<LiveCategory>> getCategores() async {
   }
 
   @override
-    Future<List<LivePlayQuality>> getPlayQualites({
+  Future<List<LivePlayQuality>> getPlayQualites({
     required LiveRoomDetail detail,
   }) async {
     List<LivePlayQuality> qualities = [];
 
     try {
-      // 尝试从 stream_url 直接取（最新路径）
-      var streamUrl = detail.data?["stream_url"];
-      if (streamUrl is Map && streamUrl.isNotEmpty) {
-        var flvPullUrl = streamUrl["flv_pull_url"];
-        var hlsPullUrl = streamUrl["hls_pull_url"];
-        if (flvPullUrl is Map) {
-          var urls = flvPullUrl.values.cast<String>().toList();
-          if (urls.isNotEmpty) {
-            qualities.add(LivePlayQuality(
-              quality: "流畅",
-              sort: 0,
-              data: urls,
-            ));
-          }
-        }
-        if (hlsPullUrl is Map) {
-          var urls = hlsPullUrl.values.cast<String>().toList();
-          if (urls.isNotEmpty) {
-            qualities.add(LivePlayQuality(
-              quality: "高清",
-              sort: 1,
-              data: urls,
-            ));
-          }
-        }
-        if (qualities.isNotEmpty) {
-          qualities.sort((a, b) => b.sort.compareTo(a.sort));
-          return qualities;
-        }
-      }
-
-      // 备用：从 live_core_sdk_data 解析
       var liveCoreData = detail.data["live_core_sdk_data"];
+
       if (liveCoreData == null) {
         return qualities;
       }
 
       var pullData = liveCoreData["pull_data"];
+
       if (pullData == null) {
         return qualities;
       }
 
       var options = pullData["options"];
+
       var qulityList = options?["qualities"];
-      if (qulityList == null) {
-        return qualities;
-      }
 
-      // 取 flv_pull_url / hls_pull_url_map（简化路径）
-      var flvList = detail.data["flv_pull_url"] is Map
-          ? (detail.data["flv_pull_url"] as Map).values.cast<String>().toList()
-          : <String>[];
-      var hlsMap = detail.data["hls_pull_url_map"] is Map
-          ? (detail.data["hls_pull_url_map"] as Map)
-          : {};
+      var streamData = pullData["stream_data"]?.toString() ?? "";
 
-      if (flvList.isNotEmpty || hlsMap.isNotEmpty) {
+      if (!streamData.startsWith('{')) {
+        var flvList = (detail.data["flv_pull_url"] as Map).values
+            .cast<String>()
+            .toList();
+        var hlsList = (detail.data["hls_pull_url_map"] as Map).values
+            .cast<String>()
+            .toList();
         for (var quality in qulityList) {
-          int level = quality["level"] ?? 0;
+          int level = quality["level"];
           List<String> urls = [];
-
-          if (flvList.isNotEmpty) {
-            var flvIndex = flvList.length - level - 1;
-            if (flvIndex >= 0 && flvIndex < flvList.length) {
-              urls.add(flvList[flvIndex]);
-            }
+          var flvIndex = flvList.length - level;
+          if (flvIndex >= 0 && flvIndex < flvList.length) {
+            urls.add(flvList[flvIndex]);
           }
-
-          if (hlsMap.isNotEmpty) {
-            var hlsValues = hlsMap.values.cast<String>().toList();
-            var hlsIndex = hlsValues.length - level - 1;
-            if (hlsIndex >= 0 && hlsIndex < hlsValues.length) {
-              urls.add(hlsValues[hlsIndex]);
-            }
+          var hlsIndex = hlsList.length - level;
+          if (hlsIndex >= 0 && hlsIndex < hlsList.length) {
+            urls.add(hlsList[hlsIndex]);
           }
-
+          var qualityItem = LivePlayQuality(
+            quality: quality["name"],
+            sort: level,
+            data: urls,
+          );
           if (urls.isNotEmpty) {
-            qualities.add(LivePlayQuality(
-              quality: quality["name"] ?? "未知",
-              sort: level,
-              data: urls,
-            ));
+            qualities.add(qualityItem);
           }
         }
       } else {
-        // 备用：解析 stream_data JSON
-        var streamData = pullData["stream_data"]?.toString() ?? "";
-        if (streamData.startsWith('{')) {
-          try {
-            var qualityData = json.decode(streamData)["data"] as Map?;
-            if (qualityData != null) {
-              for (var quality in qulityList) {
-                List<String> urls = [];
-                var sdkKey = quality["sdk_key"]?.toString() ?? "";
-                if (sdkKey.isEmpty) continue;
+        var qualityData = json.decode(streamData)["data"] as Map;
 
-                var flvUrl = qualityData[sdkKey]?["main"]?["flv"]?.toString();
-                var hlsUrl = qualityData[sdkKey]?["main"]?["hls"]?.toString();
+        for (var quality in qulityList) {
+          List<String> urls = [];
 
-                if (flvUrl != null && flvUrl.isNotEmpty) urls.add(flvUrl);
-                if (hlsUrl != null && hlsUrl.isNotEmpty) urls.add(hlsUrl);
+          var flvUrl = qualityData[quality["sdk_key"]]?["main"]?["flv"]
+              ?.toString();
 
-                if (urls.isNotEmpty) {
-                  qualities.add(LivePlayQuality(
-                    quality: quality["name"] ?? "未知",
-                    sort: quality["level"] ?? 0,
-                    data: urls,
-                  ));
-                }
-              }
-            }
-          } catch (_) {}
+          if (flvUrl != null && flvUrl.isNotEmpty) {
+            urls.add(flvUrl);
+          }
+          var hlsUrl = qualityData[quality["sdk_key"]]?["main"]?["hls"]
+              ?.toString();
+
+          if (hlsUrl != null && hlsUrl.isNotEmpty) {
+            urls.add(hlsUrl);
+          }
+
+          var qualityItem = LivePlayQuality(
+            quality: quality["name"],
+            sort: quality["level"],
+            data: urls,
+          );
+          if (urls.isNotEmpty) {
+            qualities.add(qualityItem);
+          }
         }
       }
     } catch (e, stackTrace) {
-      CoreLog.error("抖音 getPlayQualites 错误: $e");
+      CoreLog.error(e);
       CoreLog.error(stackTrace);
     }
+    // var qualityData = json.decode(
+    //     detail.data["live_core_sdk_data"]["pull_data"]["stream_data"])["data"];
 
     qualities.sort((a, b) => b.sort.compareTo(a.sort));
     _logDebug("获取到的画质列表: ${qualities.map((q) => q.quality).toList()}");
     return qualities;
   }
+
   @override
-Future<LivePlayUrl> getPlayUrls({
-  required LiveRoomDetail detail,
-  required LivePlayQuality quality,
-}) async {
-  var urls = List<String>.from(quality.data);
-
-  // 如果只有1个URL，构造备选CDN节点
-  if (urls.length <= 1 && urls.isNotEmpty) {
-    var cdnAlternatives = _getCdnAlternatives(urls.first);
-    for (var altUrl in cdnAlternatives) {
-      if (!urls.contains(altUrl)) {
-        urls.add(altUrl);
-      }
-    }
+  Future<LivePlayUrl> getPlayUrls({
+    required LiveRoomDetail detail,
+    required LivePlayQuality quality,
+  }) async {
+    // 返回列表的副本，防止外部 clear() 影响原始数据
+    return LivePlayUrl(urls: List<String>.from(quality.data));
   }
-  return LivePlayUrl(urls: urls);
-}
-
-/// 生成备选CDN地址，某个节点失效时自动切换
-List<String> _getCdnAlternatives(String url) {
-  var alternatives = <String>[];
-  try {
-    var uri = Uri.parse(url);
-    var host = uri.host;
-
-    // 抖音常见CDN域名替换
-    var cdnPatterns = [
-      {"from": "pull-flv-l1.douyin.com", "to": "pull-flv-l2.douyin.com"},
-      {"from": "pull-flv-l2.douyin.com", "to": "pull-flv-l1.douyin.com"},
-      {"from": "pull-flv.douyin.com", "to": "pull-flv-l1.douyin.com"},
-      {"from": "pull-hls.douyin.com", "to": "pull-flv.douyin.com"},
-    ];
-    for (var pattern in cdnPatterns) {
-      if (host.contains(pattern["from"]!)) {
-        alternatives.add(
-          uri.replace(host: host.replaceAll(pattern["from"]!, pattern["to"]!)).toString(),
-        );
-      }
-    }
-
-    // CDN节点编号 +1/-1
-    var hostMatch = RegExp(r'(.*?)(\d+)(.*)').firstMatch(host);
-    if (hostMatch != null) {
-      var prefix = hostMatch.group(1)!;
-      var num = int.parse(hostMatch.group(2)!);
-      var suffix = hostMatch.group(3)!;
-      alternatives.add(uri.replace(host: '$prefix${num + 1}$suffix').toString());
-      if (num > 1) {
-        alternatives.add(uri.replace(host: '$prefix${num - 1}$suffix').toString());
-      }
-    }
-  } catch (_) {}
-  return alternatives;
-}
 
   @override
   Future<LiveSearchRoomResult> searchRooms(
