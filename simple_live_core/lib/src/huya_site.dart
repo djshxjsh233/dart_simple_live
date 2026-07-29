@@ -188,24 +188,40 @@ class HuyaSite implements LiveSite {
     return Future.value(qualities);
   }
 
-  // 每次访问播放虎牙都需要获取一次，不太合理，倾向于在客户端获取保存替换
-  Future<String> getHuYaUA() async {
-    if (playUserAgent != null) {
-      return playUserAgent!;
-    }
-    try {
-      var result = await HttpClient.instance.getJson(
-        "https://github.iill.moe/xiaoyaocz/dart_simple_live/master/assets/play_config.json",
-        queryParameters: {
-          "ts": DateTime.now().millisecondsSinceEpoch,
-        },
-      );
-      playUserAgent = json.decode(result)['huya']['user_agent'];
-    } catch (e) {
-      CoreLog.error(e);
-    }
-    return playUserAgent ?? HYSDK_UA;
+  // 从多个镜像源获取最新的虎牙UA
+Future<String> getHuYaUA() async {
+  if (playUserAgent != null) {
+    return playUserAgent!;
   }
+
+  final List<String> uaMirrors = [
+    'https://raw.githubusercontent.com/liuchuancong/pure_live/master/assets/play_config.json',
+    'https://fastly.jsdelivr.net/gh/liuchuancong/pure_live@master/assets/play_config.json',
+    'https://cdn.jsdelivr.net/gh/liuchuancong/pure_live@master/assets/play_config.json',
+    'https://ghproxy.net/https://raw.githubusercontent.com/liuchuancong/pure_live/master/assets/play_config.json',
+    'https://gh.catmak.name/https://raw.githubusercontent.com/liuchuancong/pure_live/master/assets/play_config.json',
+    'https://github.iill.moe/xiaoyaocz/dart_simple_live/master/assets/play_config.json',
+  ];
+
+  for (final url in uaMirrors) {
+    try {
+      final result = await HttpClient.instance.getJson(
+        url,
+        queryParameters: {"ts": DateTime.now().millisecondsSinceEpoch.toString()},
+      );
+      if (result is Map && result['huya'] != null && result['huya']['user_agent'] != null) {
+        playUserAgent = result['huya']['user_agent'].toString();
+        CoreLog.i('HuyaSite: 从 $url 获取UA成功: $playUserAgent');
+        return playUserAgent!;
+      }
+    } catch (e) {
+      CoreLog.w('HuyaSite: 从 $url 获取UA失败: $e');
+      continue;
+    }
+  }
+  CoreLog.w('HuyaSite: 所有镜像源都失败，使用默认UA');
+  return playUserAgent ?? HYSDK_UA;
+}
 
   @override
   Future<LivePlayUrl> getPlayUrls(
