@@ -36,16 +36,16 @@ jobs:
           cd simple_live_app
           flutter pub get
 
-      - name: 打包 APK（全架构）
+      - name: 打包 APK（release模式，无debug标）
         run: |
           cd simple_live_app
-          flutter build apk --debug --split-per-abi
+          flutter build apk --release --split-per-abi
 
       - name: 重命名并收集 APK
         run: |
           mkdir -p apk_output
-          cp simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk apk_output/simple_live_arm64-v8a.apk || true
-          cp simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk apk_output/simple_live_armeabi-v7a.apk || true
+          cp simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk apk_output/simple_live_arm64-v8a.apk || true
+          cp simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk apk_output/simple_live_armeabi-v7a.apk || true
           ls -lh apk_output/
 
       - name: 上传 APK
