@@ -148,25 +148,34 @@ class DouyuSite implements LiveSite {
     return LivePlayUrl(urls: urls);
   }
 
-  Future<String> getPlayUrl(
+    Future<String> getPlayUrl(
     String roomId,
     String args,
     int rate,
     String cdn,
   ) async {
-    args += "&cdn=$cdn&rate=$rate";
+    args += "&cdn=$cdn&rate=$rate&ver=Douyu_223061205&iar=1&ive=1&hevc=0&fa=0";
     var result = await HttpClient.instance.postJson(
       "https://www.douyu.com/lapi/live/getH5Play/$roomId",
       data: args,
       header: {
         'referer': 'https://www.douyu.com/$roomId',
         'user-agent':
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 Edg/138.0.0.0",
       },
       formUrlEncoded: true,
     );
 
-    return "${result["data"]["rtmp_url"]}/${HtmlUnescape().convert(result["data"]["rtmp_live"].toString())}";
+    if (result["data"] == null || result["data"]["rtmp_url"] == null) {
+      throw Exception("斗鱼获取播放链接失败: ${result["msg"]}");
+    }
+
+    var rtmpUrl = result["data"]["rtmp_url"].toString();
+    var rtmpLive = result["data"]["rtmp_live"].toString();
+    if (rtmpLive.contains("\\u")) {
+      rtmpLive = HtmlUnescape().convert(rtmpLive);
+    }
+    return "$rtmpUrl/$rtmpLive";
   }
 
   @override
