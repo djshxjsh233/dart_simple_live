@@ -287,7 +287,7 @@ Future<List<LiveCategory>> getCategores() async {
         webRid: webRid,
         roomId: roomId,
         userId: userUniqueId,
-        cookie: headers["cookie"],
+        cookie: headers["cookie"] ?? "",
       ),
       data: room["stream_url"],
     );
@@ -349,7 +349,7 @@ Future<List<LiveCategory>> getCategores() async {
         webRid: webRid,
         roomId: roomId,
         userId: userUniqueId,
-        cookie: headers["cookie"],
+        cookie: headers["cookie"] ?? "",
       ),
       data: roomStatus ? roomData["stream_url"] : {},
     );
@@ -393,7 +393,7 @@ Future<List<LiveCategory>> getCategores() async {
         webRid: webRid,
         roomId: roomId,
         userId: userUniqueId,
-        cookie: headers["cookie"],
+        cookie: headers["cookie"] ?? "",
       ),
       data: roomStatus ? room["stream_url"] : {},
     );
