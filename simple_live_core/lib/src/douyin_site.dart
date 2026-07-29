@@ -62,17 +62,6 @@ static const String kDefaultReferer = "https://live.douyin.com";
   return headers;
 }
 
-      // 使用默认的 ttwid cookie（只需要 ttwid 即可获取所有画质）
-      headers["cookie"] = kDefaultCookie;
-      return headers;
-    } catch (e) {
-      CoreLog.error(e);
-      if (!(headers["cookie"]?.toString().isNotEmpty ?? false)) {
-        headers["cookie"] = kDefaultCookie;
-      }
-      return headers;
-    }
-  }
 
   @override
 Future<List<LiveCategory>> getCategores() async {
@@ -116,8 +105,6 @@ Future<List<LiveCategory>> getCategores() async {
     return [];
   }
 }
-    return categories;
-  }
 
   @override
   Future<LiveCategoryResult> getCategoryRooms(
@@ -702,7 +689,7 @@ List<String> _getCdnAlternatives(String url) {
     for (var pattern in cdnPatterns) {
       if (host.contains(pattern["from"]!)) {
         alternatives.add(
-          uri.replace(host: host.replace(pattern["from"]!, pattern["to"]!)).toString(),
+          uri.replace(host: host.replaceAll(pattern["from"]!, pattern["to"]!)).toString(),
         );
       }
     }
