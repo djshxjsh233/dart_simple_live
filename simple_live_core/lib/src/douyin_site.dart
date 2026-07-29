@@ -16,11 +16,10 @@ class DouyinSite implements LiveSite {
   @override
   LiveDanmaku getDanmaku() => DouyinDanmaku();
 
-  /// 使用 QQBrowser User-Agent（参考 DouyinLiveRecorder）
-  static const String kDefaultUserAgent =
-      "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400";
-
-  static const String kDefaultReferer = "https://live.douyin.com";
+  /// 使用 QQBrowser User-Agent，降低被风控概率
+static const String kDefaultUserAgent =
+    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400";
+static const String kDefaultReferer = "https://live.douyin.com";
 
   static const String kDefaultAuthority = "live.douyin.com";
 
@@ -44,13 +43,24 @@ class DouyinSite implements LiveSite {
     "User-Agent": kDefaultUserAgent,
   };
 
-  Future<Map<String, dynamic>> getRequestHeaders() async {
-    try {
-      // 如果用户已设置 cookie，直接使用用户的 cookie
-      if (cookie.isNotEmpty) {
-        headers["cookie"] = cookie;
-        return headers;
-      }
+  Future<Map<String, String>> getRequestHeaders() async {
+  var headers = {
+    "User-Agent": kDefaultUserAgent,
+    "Referer": kDefaultReferer,
+    "Origin": "https://live.douyin.com",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
+  };
+  if (cookie.isNotEmpty) {
+    headers["Cookie"] = cookie;
+  }
+  return headers;
+}
 
       // 使用默认的 ttwid cookie（只需要 ttwid 即可获取所有画质）
       headers["cookie"] = kDefaultCookie;
@@ -65,56 +75,47 @@ class DouyinSite implements LiveSite {
   }
 
   @override
-  Future<List<LiveCategory>> getCategores() async {
-    List<LiveCategory> categories = [];
-    var result = await HttpClient.instance.getText(
-      "https://live.douyin.com/",
-      queryParameters: {},
+Future<List<LiveCategory>> getCategores() async {
+  try {
+    var result = await HttpClient.instance.getJson(
+      "https://www.douyin.com/live/home/",
+      queryParameters: {"aid": "6383", "app_name": "douyin_web"},
       header: await getRequestHeaders(),
     );
 
-    var renderData =
-        RegExp(
-          r'\{\\"pathname\\":\\"\/\\",\\"categoryData.*?\]\\n',
-        ).firstMatch(result)?.group(0) ??
-        "";
-    var renderDataJson = json.decode(
-      renderData
-          .trim()
-          .replaceAll('\\"', '"')
-          .replaceAll(r"\\", r"\")
-          .replaceAll(']\\n', ""),
-    );
-
-    for (var item in renderDataJson["categoryData"]) {
-      List<LiveSubCategory> subs = [];
-      var id = '${item["partition"]["id_str"]},${item["partition"]["type"]}';
-      for (var subItem in item["sub_partition"]) {
-        var subCategory = LiveSubCategory(
-          id: '${subItem["partition"]["id_str"]},${subItem["partition"]["type"]}',
-          name: asT<String?>(subItem["partition"]["title"]) ?? "",
-          parentId: id,
-          pic: "",
-        );
-        subs.add(subCategory);
+    List<LiveCategory> categories = [];
+    var tabGroups = result["data"]?["tab_groups"];
+    if (tabGroups is List) {
+      for (var group in tabGroups) {
+        List<LiveSubCategory> subList = [];
+        var tabs = group["tabs"];
+        if (tabs is List) {
+          for (var tab in tabs) {
+            // 过滤掉"关注"、"推荐"等非分类tab
+            var type = tab["type"]?.toString() ?? "";
+            if (type != "category") continue;
+            subList.add(LiveSubCategory(
+              id: tab["id"]?.toString() ?? "",
+              name: tab["name"]?.toString() ?? tab["title"]?.toString() ?? "",
+              parentId: "",
+            ));
+          }
+        }
+        if (subList.isNotEmpty) {
+          categories.add(LiveCategory(
+            id: group["name"]?.toString() ?? "",
+            name: group["name"]?.toString() ?? "",
+            children: subList,
+          ));
+        }
       }
-
-      var category = LiveCategory(
-        children: subs,
-        id: id,
-        name: asT<String?>(item["partition"]["title"]) ?? "",
-      );
-      subs.insert(
-        0,
-        LiveSubCategory(
-          id: category.id,
-          name: category.name,
-          parentId: category.id,
-          pic: "",
-        ),
-      );
-      categories.add(category);
     }
+    return categories;
+  } catch (e) {
+    CoreLog.error("抖音获取分类失败: $e");
+    return [];
+  }
+}
     return categories;
   }
 
@@ -666,13 +667,60 @@ class DouyinSite implements LiveSite {
     return qualities;
   }
   @override
-  Future<LivePlayUrl> getPlayUrls({
-    required LiveRoomDetail detail,
-    required LivePlayQuality quality,
-  }) async {
-    // 返回列表的副本，防止外部 clear() 影响原始数据
-    return LivePlayUrl(urls: List<String>.from(quality.data));
+Future<LivePlayUrl> getPlayUrls({
+  required LiveRoomDetail detail,
+  required LivePlayQuality quality,
+}) async {
+  var urls = List<String>.from(quality.data);
+
+  // 如果只有1个URL，构造备选CDN节点
+  if (urls.length <= 1 && urls.isNotEmpty) {
+    var cdnAlternatives = _getCdnAlternatives(urls.first);
+    for (var altUrl in cdnAlternatives) {
+      if (!urls.contains(altUrl)) {
+        urls.add(altUrl);
+      }
+    }
   }
+  return LivePlayUrl(urls: urls);
+}
+
+/// 生成备选CDN地址，某个节点失效时自动切换
+List<String> _getCdnAlternatives(String url) {
+  var alternatives = <String>[];
+  try {
+    var uri = Uri.parse(url);
+    var host = uri.host;
+
+    // 抖音常见CDN域名替换
+    var cdnPatterns = [
+      {"from": "pull-flv-l1.douyin.com", "to": "pull-flv-l2.douyin.com"},
+      {"from": "pull-flv-l2.douyin.com", "to": "pull-flv-l1.douyin.com"},
+      {"from": "pull-flv.douyin.com", "to": "pull-flv-l1.douyin.com"},
+      {"from": "pull-hls.douyin.com", "to": "pull-flv.douyin.com"},
+    ];
+    for (var pattern in cdnPatterns) {
+      if (host.contains(pattern["from"]!)) {
+        alternatives.add(
+          uri.replace(host: host.replace(pattern["from"]!, pattern["to"]!)).toString(),
+        );
+      }
+    }
+
+    // CDN节点编号 +1/-1
+    var hostMatch = RegExp(r'(.*?)(\d+)(.*)').firstMatch(host);
+    if (hostMatch != null) {
+      var prefix = hostMatch.group(1)!;
+      var num = int.parse(hostMatch.group(2)!);
+      var suffix = hostMatch.group(3)!;
+      alternatives.add(uri.replace(host: '$prefix${num + 1}$suffix').toString());
+      if (num > 1) {
+        alternatives.add(uri.replace(host: '$prefix${num - 1}$suffix').toString());
+      }
+    }
+  } catch (_) {}
+  return alternatives;
+}
 
   @override
   Future<LiveSearchRoomResult> searchRooms(
