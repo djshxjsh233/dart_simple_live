@@ -536,98 +536,135 @@ class DouyinSite implements LiveSite {
   }
 
   @override
-  Future<List<LivePlayQuality>> getPlayQualites({
+    Future<List<LivePlayQuality>> getPlayQualites({
     required LiveRoomDetail detail,
   }) async {
     List<LivePlayQuality> qualities = [];
 
     try {
-      var liveCoreData = detail.data["live_core_sdk_data"];
+      // 尝试从 stream_url 直接取（最新路径）
+      var streamUrl = detail.data?["stream_url"];
+      if (streamUrl is Map && streamUrl.isNotEmpty) {
+        var flvPullUrl = streamUrl["flv_pull_url"];
+        var hlsPullUrl = streamUrl["hls_pull_url"];
+        if (flvPullUrl is Map) {
+          var urls = flvPullUrl.values.cast<String>().toList();
+          if (urls.isNotEmpty) {
+            qualities.add(LivePlayQuality(
+              quality: "流畅",
+              sort: 0,
+              data: urls,
+            ));
+          }
+        }
+        if (hlsPullUrl is Map) {
+          var urls = hlsPullUrl.values.cast<String>().toList();
+          if (urls.isNotEmpty) {
+            qualities.add(LivePlayQuality(
+              quality: "高清",
+              sort: 1,
+              data: urls,
+            ));
+          }
+        }
+        if (qualities.isNotEmpty) {
+          qualities.sort((a, b) => b.sort.compareTo(a.sort));
+          return qualities;
+        }
+      }
 
+      // 备用：从 live_core_sdk_data 解析
+      var liveCoreData = detail.data["live_core_sdk_data"];
       if (liveCoreData == null) {
         return qualities;
       }
 
       var pullData = liveCoreData["pull_data"];
-
       if (pullData == null) {
         return qualities;
       }
 
       var options = pullData["options"];
-
       var qulityList = options?["qualities"];
+      if (qulityList == null) {
+        return qualities;
+      }
 
-      var streamData = pullData["stream_data"]?.toString() ?? "";
+      // 取 flv_pull_url / hls_pull_url_map（简化路径）
+      var flvList = detail.data["flv_pull_url"] is Map
+          ? (detail.data["flv_pull_url"] as Map).values.cast<String>().toList()
+          : <String>[];
+      var hlsMap = detail.data["hls_pull_url_map"] is Map
+          ? (detail.data["hls_pull_url_map"] as Map)
+          : {};
 
-      if (!streamData.startsWith('{')) {
-        var flvList = (detail.data["flv_pull_url"] as Map).values
-            .cast<String>()
-            .toList();
-        var hlsList = (detail.data["hls_pull_url_map"] as Map).values
-            .cast<String>()
-            .toList();
+      if (flvList.isNotEmpty || hlsMap.isNotEmpty) {
         for (var quality in qulityList) {
-          int level = quality["level"];
+          int level = quality["level"] ?? 0;
           List<String> urls = [];
-          var flvIndex = flvList.length - level;
-          if (flvIndex >= 0 && flvIndex < flvList.length) {
-            urls.add(flvList[flvIndex]);
+
+          if (flvList.isNotEmpty) {
+            var flvIndex = flvList.length - level - 1;
+            if (flvIndex >= 0 && flvIndex < flvList.length) {
+              urls.add(flvList[flvIndex]);
+            }
           }
-          var hlsIndex = hlsList.length - level;
-          if (hlsIndex >= 0 && hlsIndex < hlsList.length) {
-            urls.add(hlsList[hlsIndex]);
+
+          if (hlsMap.isNotEmpty) {
+            var hlsValues = hlsMap.values.cast<String>().toList();
+            var hlsIndex = hlsValues.length - level - 1;
+            if (hlsIndex >= 0 && hlsIndex < hlsValues.length) {
+              urls.add(hlsValues[hlsIndex]);
+            }
           }
-          var qualityItem = LivePlayQuality(
-            quality: quality["name"],
-            sort: level,
-            data: urls,
-          );
+
           if (urls.isNotEmpty) {
-            qualities.add(qualityItem);
+            qualities.add(LivePlayQuality(
+              quality: quality["name"] ?? "未知",
+              sort: level,
+              data: urls,
+            ));
           }
         }
       } else {
-        var qualityData = json.decode(streamData)["data"] as Map;
+        // 备用：解析 stream_data JSON
+        var streamData = pullData["stream_data"]?.toString() ?? "";
+        if (streamData.startsWith('{')) {
+          try {
+            var qualityData = json.decode(streamData)["data"] as Map?;
+            if (qualityData != null) {
+              for (var quality in qulityList) {
+                List<String> urls = [];
+                var sdkKey = quality["sdk_key"]?.toString() ?? "";
+                if (sdkKey.isEmpty) continue;
 
-        for (var quality in qulityList) {
-          List<String> urls = [];
+                var flvUrl = qualityData[sdkKey]?["main"]?["flv"]?.toString();
+                var hlsUrl = qualityData[sdkKey]?["main"]?["hls"]?.toString();
 
-          var flvUrl = qualityData[quality["sdk_key"]]?["main"]?["flv"]
-              ?.toString();
+                if (flvUrl != null && flvUrl.isNotEmpty) urls.add(flvUrl);
+                if (hlsUrl != null && hlsUrl.isNotEmpty) urls.add(hlsUrl);
 
-          if (flvUrl != null && flvUrl.isNotEmpty) {
-            urls.add(flvUrl);
-          }
-          var hlsUrl = qualityData[quality["sdk_key"]]?["main"]?["hls"]
-              ?.toString();
-
-          if (hlsUrl != null && hlsUrl.isNotEmpty) {
-            urls.add(hlsUrl);
-          }
-
-          var qualityItem = LivePlayQuality(
-            quality: quality["name"],
-            sort: quality["level"],
-            data: urls,
-          );
-          if (urls.isNotEmpty) {
-            qualities.add(qualityItem);
-          }
+                if (urls.isNotEmpty) {
+                  qualities.add(LivePlayQuality(
+                    quality: quality["name"] ?? "未知",
+                    sort: quality["level"] ?? 0,
+                    data: urls,
+                  ));
+                }
+              }
+            }
+          } catch (_) {}
         }
       }
     } catch (e, stackTrace) {
-      CoreLog.error(e);
+      CoreLog.error("抖音 getPlayQualites 错误: $e");
       CoreLog.error(stackTrace);
     }
-    // var qualityData = json.decode(
-    //     detail.data["live_core_sdk_data"]["pull_data"]["stream_data"])["data"];
 
     qualities.sort((a, b) => b.sort.compareTo(a.sort));
     _logDebug("获取到的画质列表: ${qualities.map((q) => q.quality).toList()}");
     return qualities;
   }
-
   @override
   Future<LivePlayUrl> getPlayUrls({
     required LiveRoomDetail detail,
